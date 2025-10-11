@@ -58,29 +58,73 @@ module l1_cache #(
     reg [TAG_WIDTH-1:0] tag [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg [LINE_SIZE*8-1:0] data [0:NUM_WAYS-1][0:NUM_SETS-1];
     
-    // LRU Tracking
-    reg [1:0] lru_way [0:NUM_SETS-1];
+    // LRU Tracking - Per-Set Counters
+    // Each set has 4 counters (one per way): 0=MRU, 3=LRU
+    reg [1:0] lru_counter [0:NUM_SETS-1][0:NUM_WAYS-1];
+    
+    // Find LRU way for current set
+    reg [1:0] lru_replace_way;
+    integer lru_i;
+    always @(*) begin
+        lru_replace_way = 2'd0;
+        for (lru_i = 1; lru_i < NUM_WAYS; lru_i = lru_i + 1) begin
+            if (lru_counter[addr_index][lru_i] > lru_counter[addr_index][lru_replace_way]) begin
+                lru_replace_way = lru_i[1:0];
+            end
+        end
+    end
+    
+    // Update LRU counters on access
     reg [NUM_WAYS-1:0] lru_access_way;
     reg lru_access_valid;
-    wire [1:0] lru_replace_way;
+    integer lru_j;
     
-    lru_controller lru_ctrl (
-        .clk(clk),
-        .rst_n(rst_n),
-        .access_valid(lru_access_valid),
-        .access_way(lru_access_way),
-        .lru_way(lru_replace_way)
-    );
-    
-    // Store LRU info per set
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            integer s;
+            integer s, w;
             for (s = 0; s < NUM_SETS; s = s + 1) begin
-                lru_way[s] <= 2'd0;
+                for (w = 0; w < NUM_WAYS; w = w + 1) begin
+                    lru_counter[s][w] <= w[1:0];  // Initialize: way 0=MRU, way 3=LRU
+                end
             end
         end else if (lru_access_valid) begin
-            lru_way[addr_index] <= lru_replace_way;
+            // Update counters for the accessed set only
+            case (lru_access_way)
+                4'b0001: begin  // Way 0 accessed
+                    lru_counter[addr_index][0] <= 2'd0;  // Make it MRU
+                    for (lru_j = 1; lru_j < NUM_WAYS; lru_j = lru_j + 1) begin
+                        if (lru_counter[addr_index][lru_j] < 2'd3) 
+                            lru_counter[addr_index][lru_j] <= lru_counter[addr_index][lru_j] + 1;
+                    end
+                end
+                4'b0010: begin  // Way 1 accessed
+                    lru_counter[addr_index][1] <= 2'd0;
+                    if (lru_counter[addr_index][0] < 2'd3) 
+                        lru_counter[addr_index][0] <= lru_counter[addr_index][0] + 1;
+                    if (lru_counter[addr_index][2] < 2'd3) 
+                        lru_counter[addr_index][2] <= lru_counter[addr_index][2] + 1;
+                    if (lru_counter[addr_index][3] < 2'd3) 
+                        lru_counter[addr_index][3] <= lru_counter[addr_index][3] + 1;
+                end
+                4'b0100: begin  // Way 2 accessed
+                    lru_counter[addr_index][2] <= 2'd0;
+                    if (lru_counter[addr_index][0] < 2'd3) 
+                        lru_counter[addr_index][0] <= lru_counter[addr_index][0] + 1;
+                    if (lru_counter[addr_index][1] < 2'd3) 
+                        lru_counter[addr_index][1] <= lru_counter[addr_index][1] + 1;
+                    if (lru_counter[addr_index][3] < 2'd3) 
+                        lru_counter[addr_index][3] <= lru_counter[addr_index][3] + 1;
+                end
+                4'b1000: begin  // Way 3 accessed
+                    lru_counter[addr_index][3] <= 2'd0;
+                    if (lru_counter[addr_index][0] < 2'd3) 
+                        lru_counter[addr_index][0] <= lru_counter[addr_index][0] + 1;
+                    if (lru_counter[addr_index][1] < 2'd3) 
+                        lru_counter[addr_index][1] <= lru_counter[addr_index][1] + 1;
+                    if (lru_counter[addr_index][2] < 2'd3) 
+                        lru_counter[addr_index][2] <= lru_counter[addr_index][2] + 1;
+                end
+            endcase
         end
     end
     
@@ -144,8 +188,8 @@ module l1_cache #(
                     next_state = STATE_RESPOND;
                 end else begin
                     // Cache miss - check if need writeback
-                    if (valid[lru_way[addr_index]][addr_index] && 
-                        dirty[lru_way[addr_index]][addr_index])
+                    if (valid[lru_replace_way][addr_index] && 
+                        dirty[lru_replace_way][addr_index])
                         next_state = STATE_WRITEBACK;
                     else
                         next_state = STATE_ALLOCATE;
@@ -252,7 +296,7 @@ module l1_cache #(
                         end
                     end else begin
                         // Miss - prepare for replacement
-                        replace_way <= lru_way[addr_index];
+                        replace_way <= lru_replace_way;
                         l2_req_sent <= 1'b0;
                     end
                 end
@@ -268,6 +312,7 @@ module l1_cache #(
                         // Keep request active until acknowledged
                         if (l2_ready) begin
                             l2_wr <= 1'b0;
+                            l2_req_sent <= 1'b0;  // Clear so ALLOCATE can issue read
                         end
                     end
                 end
