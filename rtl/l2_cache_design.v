@@ -1,290 +1,259 @@
-`timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 10/07/2025 10:31:44 PM
-// Design Name: 
-// Module Name: l2_cache_design
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
+`define L2_CACHE_SIZE    131072   // 128KB
+`define L2_LINE_SIZE     64       // 64 bytes
+`define L2_NUM_WAYS      8        // 8-way set associative
+`define L2_NUM_SETS      256      // 128KB / 64B / 8 ways = 256 sets
+`define L2_TAG_WIDTH     18
+`define L2_INDEX_WIDTH   8
+`define L2_OFFSET_WIDTH  6
 
+module l2_cache #(
+    parameter CACHE_SIZE   = `L2_CACHE_SIZE,
+    parameter LINE_SIZE    = `L2_LINE_SIZE,
+    parameter NUM_WAYS     = `L2_NUM_WAYS,
+    parameter NUM_SETS     = `L2_NUM_SETS,
+    parameter TAG_WIDTH    = `L2_TAG_WIDTH,
+    parameter INDEX_WIDTH  = `L2_INDEX_WIDTH,
+    parameter OFFSET_WIDTH = `L2_OFFSET_WIDTH
+)(
+    input  wire clk,
+    input  wire rst_n,
 
-module l2_cache_design(
-    input wire clk,
-    input wire rst,
-    //L1 Interface
-    input wire readEn,
-    input wire writeEn,
-    input wire [31:0] addr,
-    input wire [31:0] write_data,
-    output wire [31:0] read_data,
-    output reg hit,
-    output reg miss,
-    
-    output reg ready,         // goes HIGH when L2 has finished the current operation
-    output reg mem_req,       // tells memory that L2 wants to read/fetch data
-    input  wire mem_ready,    // indicates that memory has completed the request
-    
-    //memory interface
-    output reg [31:0]mem_addr,
-    input wire [31:0] mem_read_data
-    );
-    localparam OFFSET_BITS = 6;
-    localparam INDEX_BITS = 9;
-    localparam TAG_BITS = 17;
-    localparam NUM_WAYS    = 4;
-    localparam WORDS_PER_LINE = 16; // 64B / 4B
-    
-    reg [31:0] data_array[0:3][0:511][0:15];
-    reg [16:0] tag_array  [0:3][0:511];   // 17-bit tags
-    reg valid_bit [0:3][0:511];
-    reg dirty_bit [0:3][0:511];
+    // From L1 (line-based)
+    input  wire [31:0] l1_addr,
+    input  wire [LINE_SIZE*8-1:0] l1_wdata,
+    input  wire l1_rd,
+    input  wire l1_wr,
+    output reg [LINE_SIZE*8-1:0] l1_rdata,
+    output reg l1_ready,
 
-    //extracting the information into specifics from the given address
-    wire [16:0] addr_tag    = addr[31:15];
-    wire [8:0]  addr_index  = addr[14:6];
-    wire [5:0]  addr_offset = addr[5:0];
-    
-    //FSM STATES encoding
-    localparam S_IDLE   = 3'd0;
-    localparam S_CHECK  = 3'd1;
-    localparam S_HIT    = 3'd2;
-    localparam S_MISS   = 3'd3;
-    localparam S_RESP   = 3'd4;
-    localparam S_MEMWAIT = 3'd5;
-    // FSM states registers
+    // To Main Memory (line-based)
+    output reg [31:0] mem_addr,
+    output reg [LINE_SIZE*8-1:0] mem_wdata,
+    output reg mem_rd,
+    output reg mem_wr,
+    input  wire [LINE_SIZE*8-1:0] mem_rdata,
+    input  wire  mem_ready
+);
+
+    // ========= Saved request (critical) =========
+    reg [31:0] saved_addr;
+    reg [LINE_SIZE*8-1:0] saved_wdata;
+    reg saved_is_rd, saved_is_wr;
+
+    // Address fields from saved_addr
+    wire [TAG_WIDTH-1:0]   addr_tag   = saved_addr[31:31-TAG_WIDTH+1];
+    wire [INDEX_WIDTH-1:0] addr_index = saved_addr[INDEX_WIDTH+OFFSET_WIDTH-1:OFFSET_WIDTH];
+
+    // ========= Arrays =========
+    reg valid [0:NUM_WAYS-1][0:NUM_SETS-1];
+    reg dirty [0:NUM_WAYS-1][0:NUM_SETS-1];
+    reg [TAG_WIDTH-1:0] tag [0:NUM_WAYS-1][0:NUM_SETS-1];
+    reg [LINE_SIZE*8-1:0] data [0:NUM_WAYS-1][0:NUM_SETS-1];
+    reg [2:0] lru_counter [0:NUM_SETS-1][0:NUM_WAYS-1]; // 0=MRU..7=LRU
+
+    // ========= Tag match =========
+    reg cache_hit;
+    reg [7:0] way_hit;
+    reg [2:0] hit_way;
+    integer w;
+    always @(*) begin
+        cache_hit = 1'b0;
+        way_hit   = 8'b0;
+        hit_way   = 3'd0;
+        for (w = 0; w < NUM_WAYS; w = w + 1) begin
+            if (valid[w][addr_index] && (tag[w][addr_index] == addr_tag)) begin
+                cache_hit   = 1'b1;
+                way_hit[w]  = 1'b1;
+                hit_way     = w[2:0];
+            end
+        end
+    end
+
+    // ========= LRU select =========
+    reg [2:0] lru_replace_way;
+    integer lw;
+    always @(*) begin
+        lru_replace_way = 3'd0;
+        for (lw = 1; lw < NUM_WAYS; lw = lw + 1)
+            if (lru_counter[addr_index][lw] > lru_counter[addr_index][lru_replace_way])
+                lru_replace_way = lw[2:0];
+    end
+
+    // ========= FSM =========
+    localparam IDLE=3'd0, CHECK_HIT=3'd1, WRITEBACK=3'd2, ALLOCATE=3'd3, RESPOND=3'd4;
     reg [2:0] state, next_state;
-    
-    
-    //adding lru handling registers
-    reg [1:0] lru_counter [0:3][0:511]; // 4 ways × 512 sets
+    reg [2:0] replace_way;
+    reg req_sent;              // mem request in-flight
 
+    // LRU update pulse
+    reg lru_update_en;
+    reg [2:0] lru_update_way;
 
-    always @(posedge clk or posedge rst) begin
-        if (rst)
-            state <= S_IDLE;
-        else
-            state <= next_state;
+    // State reg
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) state <= IDLE;
+        else        state <= next_state;
     end
 
-    
-    
-    integer i, j;
-    initial begin
-        for (i = 0; i < 4; i = i + 1) begin
-            for (j = 0; j < 512; j = j + 1) begin
-                valid_bit[i][j] = 0;
-                dirty_bit[i][j] = 0;
-                tag_array[i][j] = 0;
-            end
-        end
-    end
-    
-    
-    //Checking for Hit or Miss combinational
-    
-    integer way;
-    reg[3:0] hit_way;
-    reg hit_found;
-    always@(*) begin
-        hit_found = 0;
-        hit_way = 4'b0000;
-        for(way = 0;way<4;way=way+1)begin
-            if (valid_bit[way][addr_index] && (tag_array[way][addr_index] == addr_tag))begin
-                hit_found = 1'b1;
-                hit_way[way] = 1'b1; //marking which way hit one hot encoding
-            end
-        end
-    end
-    
-    //updating the hit/miss tags
-    always@(posedge clk or posedge rst) begin
-        if (rst) begin
-            hit<=1'b0;
-            miss<=1'b0;
-         end else begin
-            if (readEn || writeEn)begin
-                hit<=hit_found;
-                miss <=~hit_found;
-             end else begin
-                hit<=1'b0;
-                miss<=1'b0;
-             end
-           end
-        end
-       
-       
-       //updating the fsm block 
-       
-       // FSM next state logic
+    // Next state
     always @(*) begin
         next_state = state;
-        case (state)
-            S_IDLE: begin
-                if (readEn || writeEn)
-                    next_state = S_CHECK;
-            end
-            
-            S_CHECK: begin
-                if (hit_found)
-                    next_state = S_HIT;
-                else
-                    next_state = S_MISS;
-            end
     
-            S_HIT: begin
-                // after handling hit, respond immediately
-                next_state = S_RESP;
-            end
+        if (state == IDLE) begin
+            if (l1_rd || l1_wr)
+                next_state = CHECK_HIT;
+            else
+                next_state = IDLE;
     
-            S_MISS: begin
-                // directly transition to MEMWAIT after issuing request
-                next_state = S_MEMWAIT;
-            end
-
+        end else if (state == CHECK_HIT) begin
+            if (cache_hit)
+                next_state = RESPOND;
+            else if (valid[lru_replace_way][addr_index] && dirty[lru_replace_way][addr_index])
+                next_state = WRITEBACK;
+            else
+                next_state = ALLOCATE;
     
-            S_MEMWAIT: begin
-                if (mem_ready)
-                    next_state = S_RESP;
-            end
+        end else if (state == WRITEBACK) begin
+            if (req_sent && mem_ready)
+                next_state = ALLOCATE;
+            else
+                next_state = WRITEBACK;
     
-            S_RESP: begin
-                // after ready signal, go back idle
-                next_state = S_IDLE;
-            end
-        endcase
-    end
-
-       //reading the data 
-       wire [3:0] word_index = addr_offset[5:2];
-       reg[31:0] read_data_temp;
-       
-       
-       //reading the data
-       always @(*) begin
-        if (state == S_HIT && hit_found && readEn) begin
-            case (hit_way)
-                4'b0001: read_data_temp = data_array[0][addr_index][word_index];
-                4'b0010: read_data_temp = data_array[1][addr_index][word_index];
-                4'b0100: read_data_temp = data_array[2][addr_index][word_index];
-                4'b1000: read_data_temp = data_array[3][addr_index][word_index];
-            endcase
+        end else if (state == ALLOCATE) begin
+            if (req_sent && mem_ready)
+                next_state = RESPOND;
+            else
+                next_state = ALLOCATE;
+    
+        end else if (state == RESPOND) begin
+            next_state = IDLE;
+    
         end else begin
-            read_data_temp = 32'b0;
+            next_state = IDLE;
         end
     end
 
-     assign read_data = read_data_temp;
-     
-     
-     //writing data from l1 and declaring it as dirty
-     integer w;
-     always @(posedge clk) begin
-        if (state == S_HIT && writeEn && hit_found) begin
-            for (w = 0; w < NUM_WAYS; w = w + 1) begin
-                if (hit_way[w]) begin
-                    data_array[w][addr_index][word_index] <= write_data;
-                    dirty_bit[w][addr_index] <= 1'b1;
-                end
-            end
-        end
-    end
-    
-    integer way2;
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            for (i = 0; i < NUM_WAYS; i = i + 1)
-                for (j = 0; j < 512; j = j + 1)
-                    lru_counter[i][j] <= 2'b00;
-        end else if (state == S_HIT && hit_found) begin
-            for (way2 = 0; way2 < NUM_WAYS; way2 = way2 + 1) begin
-                if (hit_way[way2]) begin
-                    lru_counter[way2][addr_index] <= 2'b11; // most recent
-                end else if (lru_counter[way2][addr_index] > 0) begin
-                    lru_counter[way2][addr_index] <= lru_counter[way2][addr_index] - 1;
-                end
-            end
-        end
-    end
 
-    //Victim selection based on LRU 
-    reg[1:0] victim_way;
-    always@(*) begin
-        victim_way = 2'b00;
-        for (way = 0;way<NUM_WAYS;way=way+1)begin
-            if (lru_counter[way][addr_index] == 2'b00)
-                victim_way = way[1:0];
-            end
-        end
-     
-         
-    //FSM OUTPUT 
-    
-    // FSM output & control logic
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            ready    <= 1'b0;
-            mem_req  <= 1'b0;
+    // Body
+    integer i,j;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (i=0;i<NUM_WAYS;i=i+1)
+                for (j=0;j<NUM_SETS;j=j+1) begin
+                    valid[i][j] <= 1'b0;
+                    dirty[i][j] <= 1'b0;
+                    tag[i][j]   <= {TAG_WIDTH{1'b0}};
+                    data[i][j]  <= {LINE_SIZE*8{1'b0}};
+                    lru_counter[j][i] <= i[2:0]; // 0..7
+                end
+            l1_ready <= 1'b0;
+            l1_rdata <= {LINE_SIZE*8{1'b0}};
+            mem_rd   <= 1'b0;
+            mem_wr   <= 1'b0;
             mem_addr <= 32'b0;
-        end else begin
-            // Default outputs
-            ready   <= 1'b0;
-            mem_req <= 1'b0;
-    
+            mem_wdata<= {LINE_SIZE*8{1'b0}};
+            req_sent <= 1'b0;
+
+            saved_addr   <= 32'b0;
+            saved_wdata  <= {LINE_SIZE*8{1'b0}};
+            saved_is_rd  <= 1'b0;
+            saved_is_wr  <= 1'b0;
+
+            lru_update_en <= 1'b0;
+            lru_update_way<= 3'd0;
+            replace_way   <= 3'd0;
+        end
+        else begin
+            // defaults each cycle
+            l1_ready      <= 1'b0;
+            lru_update_en <= 1'b0;
+
             case (state)
-                S_IDLE: begin
-                    // Wait for new request
-                    ready   <= 1'b0;
-                    mem_req <= 1'b0;
-                end
-    
-                S_CHECK: begin
-                    // No output - just check hit/miss (combinational)
-                end
-    
-                S_HIT: begin
-                    // Cache hit: ready to respond immediately
-                    ready <= 1'b1;
-                    mem_req <= 1'b0;
-                end
-    
-                S_MISS: begin
-                    // Cache miss: issue memory request
-                    mem_addr <= addr;
-                    mem_req  <= 1'b1;
-                end
-    
-                S_MEMWAIT: begin
-                    // Wait for memory to be ready
-                    if (mem_ready) begin
-                        // --- refill new cache line ---
-                        data_array[victim_way][addr_index][word_index] <= mem_read_data;
-                        tag_array[victim_way][addr_index] <= addr_tag;
-                        valid_bit[victim_way][addr_index] <= 1'b1;
-                        dirty_bit[victim_way][addr_index] <= 1'b0;
-                        lru_counter[victim_way][addr_index] <= 2'b11;
-                        mem_req <= 1'b0;
+                IDLE: begin
+                    mem_rd   <= 1'b0;
+                    mem_wr   <= 1'b0;
+                    req_sent <= 1'b0;
+                    // latch request only here
+                    if (l1_rd || l1_wr) begin
+                        saved_addr  <= l1_addr;
+                        saved_wdata <= l1_wdata;
+                        saved_is_rd <= l1_rd;
+                        saved_is_wr <= l1_wr;
                     end
                 end
-    
-                S_RESP: begin
-                    // Signal completion
-                    ready <= 1'b1;
+
+                CHECK_HIT: begin
+                    if (cache_hit) begin
+                        // read hit: return whole line
+                        if (saved_is_rd) begin
+                            l1_rdata <= data[hit_way][addr_index];
+                        end
+                        // write hit: full-line write
+                        if (saved_is_wr) begin
+                            data[hit_way][addr_index]  <= saved_wdata;
+                            dirty[hit_way][addr_index] <= 1'b1;
+                        end
+                        // LRU: mark hit_way as MRU
+                        lru_update_en  <= 1'b1;
+                        lru_update_way <= hit_way;
+                    end
+                    else begin
+                        replace_way <= lru_replace_way;
+                    end
+                end
+
+                WRITEBACK: begin
+                    if (!req_sent) begin
+                        mem_addr  <= {tag[replace_way][addr_index], addr_index, {OFFSET_WIDTH{1'b0}}};
+                        mem_wdata <= data[replace_way][addr_index];
+                        mem_wr    <= 1'b1;
+                        req_sent  <= 1'b1;
+                    end else if (mem_ready) begin
+                        mem_wr    <= 1'b0;
+                        req_sent  <= 1'b0;
+                        // after successful WB, clear dirty
+                        dirty[replace_way][addr_index] <= 1'b0;
+                    end
+                end
+
+                ALLOCATE: begin
+                    if (!req_sent) begin
+                        mem_addr <= {addr_tag, addr_index, {OFFSET_WIDTH{1'b0}}};
+                        mem_rd   <= 1'b1;
+                        req_sent <= 1'b1;
+                    end else if (mem_ready) begin
+                        mem_rd   <= 1'b0;
+                        req_sent <= 1'b0;
+                        // install line
+                        data[replace_way][addr_index]  <= saved_is_wr ? saved_wdata : mem_rdata;
+                        tag[replace_way][addr_index]   <= addr_tag;
+                        valid[replace_way][addr_index] <= 1'b1;
+                        dirty[replace_way][addr_index] <= saved_is_wr; // write-allocate
+                        // prepare read response
+                        if (saved_is_rd) l1_rdata <= mem_rdata;
+                        // LRU: mark installed way as MRU
+                        lru_update_en  <= 1'b1;
+                        lru_update_way <= replace_way;
+                    end
+                end
+
+                RESPOND: begin
+                    l1_ready <= 1'b1; // 1-cycle ack
                 end
             endcase
+
+            // ===== LRU counter update for one set =====
+            if (lru_update_en) begin : LRU_UPD
+                integer k;
+                for (k=0; k<NUM_WAYS; k=k+1) begin
+                    if (k == lru_update_way) begin
+                        lru_counter[addr_index][k] <= 3'd0; // MRU
+                    end else begin
+                        if (lru_counter[addr_index][k] < 3'd7)
+                            lru_counter[addr_index][k] <= lru_counter[addr_index][k] + 3'd1;
+                    end
+                end
+            end
         end
     end
-    
-//need to implement memory writeback for dirty lines     
 endmodule
