@@ -238,7 +238,7 @@ module tb_l1_l2_full;
         cpu_write(32'h0000_3000, 32'hCAFEBABE);
         repeat (5) @(posedge clk);
 
-                // ========================================
+        // ========================================
         // TEST 7: Sequential Reads (Fill L1 cache)
         // ========================================
         test_num = 7;
@@ -261,7 +261,6 @@ module tb_l1_l2_full;
         // 9th access: triggers eviction of dirty line
         cpu_write(32'h0001_0000 + (8 << 14), 32'hAAAA0008);
         repeat (50) @(posedge clk);
-
 
         // ========================================
         // TEST 8: Access Pattern to Trigger Eviction
