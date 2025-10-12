@@ -252,11 +252,4 @@ module new_l2_cache #(
         end
     end
     
-    
-    always @(posedge clk) begin
-      $display("%0t state=%0d req_sent=%0b mem_ready=%0b", $time, state, req_sent, mem_ready);
-      $display("%0t | cache_hit=%0b valid_hit=%0b tag_match=%0b", 
-      $time, uut.cache_hit, uut.valid[0][uut.addr_index], (uut.tag[0][uut.addr_index]==uut.addr_tag));
-
-    end
 endmodule
