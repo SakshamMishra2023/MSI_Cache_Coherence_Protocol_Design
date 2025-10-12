@@ -1,12 +1,7 @@
-`define L2_CACHE_SIZE    131072   // 128KB
-`define L2_LINE_SIZE     64       // 64 bytes
-`define L2_NUM_WAYS      8        // 8-way set associative
-`define L2_NUM_SETS      256      // 128KB / 64B / 8 ways = 256 sets
-`define L2_TAG_WIDTH     18
-`define L2_INDEX_WIDTH   8
-`define L2_OFFSET_WIDTH  6
 
-module l2_cache #(
+`include "cache_params.vh"
+
+module new_l2_cache #(
     parameter CACHE_SIZE   = `L2_CACHE_SIZE,
     parameter LINE_SIZE    = `L2_LINE_SIZE,
     parameter NUM_WAYS     = `L2_NUM_WAYS,
@@ -114,13 +109,13 @@ module l2_cache #(
                 next_state = ALLOCATE;
     
         end else if (state == WRITEBACK) begin
-            if (req_sent && mem_ready)
+            if (mem_ready)
                 next_state = ALLOCATE;
             else
                 next_state = WRITEBACK;
     
         end else if (state == ALLOCATE) begin
-            if (req_sent && mem_ready)
+            if (mem_ready)
                 next_state = RESPOND;
             else
                 next_state = ALLOCATE;
@@ -255,5 +250,13 @@ module l2_cache #(
                 end
             end
         end
+    end
+    
+    
+    always @(posedge clk) begin
+      $display("%0t state=%0d req_sent=%0b mem_ready=%0b", $time, state, req_sent, mem_ready);
+      $display("%0t | cache_hit=%0b valid_hit=%0b tag_match=%0b", 
+      $time, uut.cache_hit, uut.valid[0][uut.addr_index], (uut.tag[0][uut.addr_index]==uut.addr_tag));
+
     end
 endmodule
