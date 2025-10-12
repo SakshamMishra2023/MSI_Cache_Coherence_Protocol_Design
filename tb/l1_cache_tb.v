@@ -1,5 +1,4 @@
-// l1_cache_tb.v - DEBUG VERSION
-// Enhanced testbench with debug output
+
 
 `include "cache_params.vh"
 `timescale 1ns/1ps

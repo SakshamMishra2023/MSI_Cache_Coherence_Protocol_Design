@@ -1,6 +1,5 @@
 // cache_line.v
 // Single cache line with tag, valid, dirty, and data storage
-// Used as building block for cache sets
 
 `include "cache_params.vh"
 

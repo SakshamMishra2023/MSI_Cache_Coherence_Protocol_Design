@@ -1,6 +1,4 @@
-// l1_cache_fixed.v
-// L1 Cache with proper L2 writeback protocol
-// Fixes the coherence issue by ensuring dirty lines are written back to L2 before eviction
+//debugging from claude and code snippets from https://github.com/midn8hustlr/MSI_cache_coherence/tree/master/RTL
 
 `include "cache_params.vh"
 
@@ -34,12 +32,12 @@ module l1_cache #(
     input  wire l2_ready
 );
 
-    // ===== Address Decomposition =====
+    //Address Decomposition
     wire [TAG_WIDTH-1:0]   cpu_tag    = cpu_addr[31:31-TAG_WIDTH+1];
     wire [INDEX_WIDTH-1:0] cpu_index  = cpu_addr[INDEX_WIDTH+OFFSET_WIDTH-1:OFFSET_WIDTH];
     wire [OFFSET_WIDTH-3-1:0] cpu_word_offset = cpu_addr[OFFSET_WIDTH-1:2];
 
-    // ===== Saved Request =====
+    //Saved Request
     reg [31:0] saved_addr;
     reg [31:0] saved_wdata;
     reg [3:0]  saved_byte_en;
@@ -50,16 +48,16 @@ module l1_cache #(
     wire [INDEX_WIDTH-1:0] addr_index = saved_addr[INDEX_WIDTH+OFFSET_WIDTH-1:OFFSET_WIDTH];
     wire [OFFSET_WIDTH-3-1:0] word_offset = saved_addr[OFFSET_WIDTH-1:2];
 
-    // ===== Cache Arrays =====
+    //Cache Arrays
     reg valid [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg dirty [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg [TAG_WIDTH-1:0] tag [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg [LINE_SIZE*8-1:0] data [0:NUM_WAYS-1][0:NUM_SETS-1];
 
-    // ===== LRU Tracking =====
+    // LRU Tracking
     reg [1:0] lru_counter [0:NUM_SETS-1][0:NUM_WAYS-1];
 
-    // ===== Tag Comparison =====
+    //Tag Comparison
     reg cache_hit;
     reg [NUM_WAYS-1:0] way_hit;
     reg [1:0] hit_way;
@@ -78,7 +76,7 @@ module l1_cache #(
         end
     end
 
-    // ===== LRU Selection =====
+    //LRU Selection
     reg [1:0] lru_way;
     integer lw;
     
@@ -91,7 +89,7 @@ module l1_cache #(
         end
     end
 
-    // ===== FSM States =====
+    //FSM States
     localparam IDLE         = 4'd0;
     localparam CHECK_HIT    = 4'd1;
     localparam WRITEBACK_L2 = 4'd2;  // NEW: Writeback victim to L2
@@ -105,13 +103,13 @@ module l1_cache #(
     reg [TAG_WIDTH-1:0] victim_tag;
     reg [LINE_SIZE*8-1:0] victim_data;
 
-    // ===== State Register =====
+    //State Register
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) state <= IDLE;
         else        state <= next_state;
     end
 
-    // ===== Next State Logic =====
+    //Next State Logic
     always @(*) begin
         next_state = state;
         
@@ -162,7 +160,7 @@ module l1_cache #(
         endcase
     end
 
-    // ===== Datapath =====
+    // Datapath
     reg [LINE_SIZE*8-1:0] modified_line;
     reg req_sent;
     reg lru_update;
@@ -309,7 +307,7 @@ module l1_cache #(
                 end
             endcase
 
-            // ===== LRU Update =====
+            // LRU Update
             if (lru_update) begin : LRU_UPDATE_BLOCK
                 integer k;
                 for (k = 0; k < NUM_WAYS; k = k + 1) begin

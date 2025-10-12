@@ -3,11 +3,11 @@
 
 module tb_l1_l2_full;
 
-    // ===== Clock & Reset =====
+    // Clock & Reset
     reg clk;
     reg rst_n;
 
-    // ===== CPU <-> L1 interface =====
+    // CPU <-> L1 interface 
     reg  [31:0] cpu_addr;
     reg  [31:0] cpu_wdata;
     reg  [3:0]  cpu_byte_en;
@@ -16,7 +16,7 @@ module tb_l1_l2_full;
     wire [31:0] cpu_rdata;
     wire cpu_ready;
 
-    // ===== L1 <-> L2 interface =====
+    // L1 <-> L2 interface
     wire [31:0] l2_addr;
     wire [`L1_LINE_WIDTH-1:0] l2_wdata;
     wire l2_rd;
@@ -24,7 +24,7 @@ module tb_l1_l2_full;
     wire [`L1_LINE_WIDTH-1:0] l2_rdata;
     wire l2_ready;
 
-    // ===== L2 <-> Memory interface =====
+    // L2 <-> Memory interface
     wire [31:0] mem_addr;
     wire [`L2_LINE_WIDTH-1:0] mem_wdata;
     wire mem_rd;
@@ -32,7 +32,7 @@ module tb_l1_l2_full;
     wire [`L2_LINE_WIDTH-1:0] mem_rdata;
     wire mem_ready;
 
-    // ===== Instantiate L1 Cache =====
+    //Instantiate L1 Cache
     l1_cache l1_inst (
         .clk(clk),
         .rst_n(rst_n),
@@ -51,7 +51,7 @@ module tb_l1_l2_full;
         .l2_ready(l2_ready)
     );
 
-    // ===== Instantiate L2 Cache =====
+    //Instantiate L2 Cache 
     new_l2_cache l2_inst (
         .clk(clk),
         .rst_n(rst_n),
@@ -69,7 +69,7 @@ module tb_l1_l2_full;
         .mem_ready(mem_ready)
     );
 
-    // ===== Instantiate DRAM Model =====
+    // Instantiate DRAM Model
     dram #(
         .LINE_SIZE(`L2_LINE_SIZE),
         .LATENCY(10),
@@ -85,19 +85,19 @@ module tb_l1_l2_full;
         .mem_ready(mem_ready)
     );
 
-    // ===== Clock Generation =====
+    // Clock Generation
     initial begin
         clk = 0;
         forever #5 clk = ~clk;  // 10 ns clock period (100 MHz)
     end
 
-    // ===== Waveform Dump =====
+    // Waveform Dump
     initial begin
         $dumpfile("l1_l2_full_test.vcd");
         $dumpvars(0, tb_l1_l2_full);
     end
 
-    // ===== Monitor Cache States =====
+    // Monitor Cache States 
     always @(posedge clk) begin
         if (l1_inst.state != l1_inst.next_state) begin
             $display("[%0t] L1 State: %0d -> %0d", $time, l1_inst.state, l1_inst.next_state);
@@ -114,7 +114,7 @@ module tb_l1_l2_full;
         end
     end
 
-    // ===== Task: CPU Read =====
+    // Task: CPU Read
     task cpu_read;
         input [31:0] addr;
         begin
@@ -130,7 +130,7 @@ module tb_l1_l2_full;
         end
     endtask
 
-    // ===== Task: CPU Write =====
+    // Task: CPU Write 
     task cpu_write;
         input [31:0] addr;
         input [31:0] data;
@@ -148,7 +148,7 @@ module tb_l1_l2_full;
         end
     endtask
 
-    // ===== Main Test Stimulus =====
+    // Main Test Stimulus 
     integer i;
     integer test_num;
 
@@ -162,14 +162,14 @@ module tb_l1_l2_full;
         cpu_byte_en = 4'b0000;
         test_num   = 0;
 
-        // ===== Reset Phase =====
+        // Reset Phase
         #20;
         rst_n = 1;
         #20;
 
-        // ========================================
+       
         // TEST 1: CPU Read Miss (L1 miss, L2 miss)
-        // ========================================
+       
         test_num = 1;
         $display("\n========================================");
         $display("TEST %0d: CPU READ MISS (COLD START)", test_num);
@@ -178,9 +178,9 @@ module tb_l1_l2_full;
         cpu_read(32'h0000_1000);
         repeat (5) @(posedge clk);
 
-        // ========================================
+      
         // TEST 2: CPU Read Hit (L1 hit)
-        // ========================================
+       
         test_num = 2;
         $display("\n========================================");
         $display("TEST %0d: CPU READ HIT (L1 CACHE)", test_num);
@@ -189,9 +189,9 @@ module tb_l1_l2_full;
         cpu_read(32'h0000_1000);
         repeat (5) @(posedge clk);
 
-        // ========================================
+       
         // TEST 3: CPU Write Hit (L1 hit)
-        // ========================================
+      
         test_num = 3;
         $display("\n========================================");
         $display("TEST %0d: CPU WRITE HIT (L1 CACHE)", test_num);
@@ -200,9 +200,9 @@ module tb_l1_l2_full;
         cpu_write(32'h0000_1000, 32'hDEADBEEF);
         repeat (5) @(posedge clk);
 
-        // ========================================
+     
         // TEST 4: CPU Read to Verify Write
-        // ========================================
+ 
         test_num = 4;
         $display("\n========================================");
         $display("TEST %0d: CPU READ AFTER WRITE", test_num);
@@ -216,9 +216,9 @@ module tb_l1_l2_full;
         end
         repeat (5) @(posedge clk);
 
-        // ========================================
+     
         // TEST 5: Read Different Line (L1 miss, L2 miss)
-        // ========================================
+      
         test_num = 5;
         $display("\n========================================");
         $display("TEST %0d: READ DIFFERENT ADDRESS", test_num);
@@ -227,9 +227,9 @@ module tb_l1_l2_full;
         cpu_read(32'h0000_2000);
         repeat (5) @(posedge clk);
 
-        // ========================================
+       
         // TEST 6: Write to New Address
-        // ========================================
+      
         test_num = 6;
         $display("\n========================================");
         $display("TEST %0d: WRITE TO NEW ADDRESS", test_num);
@@ -238,9 +238,9 @@ module tb_l1_l2_full;
         cpu_write(32'h0000_3000, 32'hCAFEBABE);
         repeat (5) @(posedge clk);
 
-        // ========================================
+       
         // TEST 7: Sequential Reads (Fill L1 cache)
-        // ========================================
+        
         test_num = 7;
         $display("\n========================================");
         $display("TEST %0d: SEQUENTIAL READS (FILL CACHE)", test_num);
@@ -262,9 +262,9 @@ module tb_l1_l2_full;
         cpu_write(32'h0001_0000 + (8 << 14), 32'hAAAA0008);
         repeat (50) @(posedge clk);
 
-        // ========================================
+        
         // TEST 8: Access Pattern to Trigger Eviction
-        // ========================================
+       
         test_num = 8;
         $display("\n========================================");
         $display("TEST %0d: TRIGGER CACHE EVICTION", test_num);
@@ -281,9 +281,9 @@ module tb_l1_l2_full;
         cpu_write(32'h0002_0000 + (4 << 13), 32'h1000_0004);
         repeat (5) @(posedge clk);
 
-        // ========================================
+      
         // TEST 9: Read Back Evicted Data
-        // ========================================
+        
         test_num = 9;
         $display("\n========================================");
         $display("TEST %0d: READ BACK EVICTED DATA", test_num);
@@ -292,9 +292,9 @@ module tb_l1_l2_full;
         cpu_read(32'h0002_0000);  // First address that was written
         repeat (5) @(posedge clk);
 
-        // ========================================
+        
         // TEST 10: Stress Test - Random Accesses
-        // ========================================
+        
         test_num = 10;
         $display("\n========================================");
         $display("TEST %0d: STRESS TEST - MIXED OPS", test_num);
@@ -313,9 +313,8 @@ module tb_l1_l2_full;
         cpu_read(32'h0000_1000);  // Go back to first address
         repeat (5) @(posedge clk);
 
-        // ========================================
+       
         // End of Tests
-        // ========================================
         $display("\n========================================");
         $display("ALL TESTS COMPLETE");
         $display("========================================\n");
@@ -324,7 +323,7 @@ module tb_l1_l2_full;
         $finish;
     end
     
-    // ===== Timeout Watchdog =====
+    //Timeout Watchdog
     initial begin
         #200000;  // 200 microseconds
         $display("\n[ERROR] Simulation timeout!");

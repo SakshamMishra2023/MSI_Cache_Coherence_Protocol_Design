@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 `include "cache_params.vh"
 
-// DRAM Memory Model
+// Claude hep in generating display statistics code
 // Simulates main memory with configurable latency
 // Supports read and write operations with realistic timing
 

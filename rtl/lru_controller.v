@@ -3,6 +3,8 @@
 // Uses pseudo-LRU with 2-bit counters per way
 // Counter values: 0=MRU (Most Recently Used), 3=LRU (Least Recently Used)
 
+//code debugging used from claude
+
 module lru_controller #(
     parameter NUM_WAYS = 4
 )(

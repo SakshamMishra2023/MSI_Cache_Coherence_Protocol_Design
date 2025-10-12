@@ -1,6 +1,4 @@
-// new_l2_cache_fixed.v
-// L2 Cache with proper handling of L1 writebacks
-// Marks lines as dirty when receiving writes from L1
+// With code snippets from https://github.com/midn8hustlr/MSI_cache_coherence/tree/master/RTL and enhancements from claude
 
 `include "cache_params.vh"
 
@@ -33,7 +31,7 @@ module new_l2_cache #(
     input  wire mem_ready
 );
 
-    // ===== Saved Request =====
+    //  Saved Request 
     reg [31:0] saved_addr;
     reg [LINE_SIZE*8-1:0] saved_wdata;
     reg saved_is_rd, saved_is_wr;
@@ -41,14 +39,14 @@ module new_l2_cache #(
     wire [TAG_WIDTH-1:0]   addr_tag   = saved_addr[31:31-TAG_WIDTH+1];
     wire [INDEX_WIDTH-1:0] addr_index = saved_addr[INDEX_WIDTH+OFFSET_WIDTH-1:OFFSET_WIDTH];
 
-    // ===== Cache Arrays =====
+    //Cache Arrays
     reg valid [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg dirty [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg [TAG_WIDTH-1:0] tag [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg [LINE_SIZE*8-1:0] data [0:NUM_WAYS-1][0:NUM_SETS-1];
     reg [2:0] lru_counter [0:NUM_SETS-1][0:NUM_WAYS-1];
 
-    // ===== Tag Match =====
+    //Tag Match
     reg cache_hit;
     reg [7:0] way_hit;
     reg [2:0] hit_way;
@@ -67,7 +65,7 @@ module new_l2_cache #(
         end
     end
 
-    // ===== LRU Selection =====
+    //LRU Selection
     reg [2:0] lru_replace_way;
     integer lw;
     
@@ -79,7 +77,7 @@ module new_l2_cache #(
         end
     end
 
-    // ===== FSM =====
+    //FSM
     localparam IDLE      = 3'd0;
     localparam CHECK_HIT = 3'd1;
     localparam WRITEBACK = 3'd2;
@@ -93,13 +91,13 @@ module new_l2_cache #(
     reg lru_update_en;
     reg [2:0] lru_update_way;
 
-    // ===== State Register =====
+    //State Register
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) state <= IDLE;
         else        state <= next_state;
     end
 
-    // ===== Next State Logic =====
+    //Next State Logic
     always @(*) begin
         next_state = state;
 
@@ -136,7 +134,7 @@ module new_l2_cache #(
         endcase
     end
 
-    // ===== Datapath =====
+    //Datapath
     integer i, j;
     
     always @(posedge clk or negedge rst_n) begin
@@ -276,7 +274,7 @@ module new_l2_cache #(
                 end
             endcase
 
-            // ===== LRU Update =====
+            //LRU Update
             if (lru_update_en) begin : LRU_UPD
                 integer k;
                 for (k = 0; k < NUM_WAYS; k = k + 1) begin
