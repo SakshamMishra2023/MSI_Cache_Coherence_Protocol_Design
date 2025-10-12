@@ -238,18 +238,30 @@ module tb_l1_l2_full;
         cpu_write(32'h0000_3000, 32'hCAFEBABE);
         repeat (5) @(posedge clk);
 
-        // ========================================
+                // ========================================
         // TEST 7: Sequential Reads (Fill L1 cache)
         // ========================================
         test_num = 7;
         $display("\n========================================");
         $display("TEST %0d: SEQUENTIAL READS (FILL CACHE)", test_num);
         $display("========================================");
+        
+//        cpu_read(32'h0001_0000);
+//        repeat (30) @(posedge clk);
+//        cpu_read(32'h0001_4000);  // Manually 0x4000 apart
+//        repeat (30) @(posedge clk);
+//        cpu_read(32'h0001_8000);  // Manually 0x4000 apart
+//        repeat (30) @(posedge clk);
+        // First 8 accesses: WRITE to make them dirty
         for (i = 0; i < 8; i = i + 1) begin
-            cpu_read(32'h0001_0000 + (i << 6));  // Different cache lines
-            repeat (3) @(posedge clk);
+            cpu_write(32'h0001_0000 + (i << 14), 32'hAAAA0000 + i);
+            repeat (30) @(posedge clk);
         end
-        repeat (5) @(posedge clk);
+        
+        // 9th access: triggers eviction of dirty line
+        cpu_write(32'h0001_0000 + (8 << 14), 32'hAAAA0008);
+        repeat (50) @(posedge clk);
+
 
         // ========================================
         // TEST 8: Access Pattern to Trigger Eviction
