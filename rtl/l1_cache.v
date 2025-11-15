@@ -4,7 +4,7 @@
 
 `include "cache_params.vh"
 
-module l1_cache_msi #(
+module l1_cache #(
     parameter CACHE_SIZE = `L1_CACHE_SIZE,
     parameter LINE_SIZE = `L1_LINE_SIZE,
     parameter NUM_WAYS = `L1_NUM_WAYS,
@@ -277,9 +277,14 @@ module l1_cache_msi #(
                             coherence_state[lru_replace_way][addr_index] == COHERENCE_M)
                             next_state = STATE_WRITEBACK;
                         else
-                            next_state = STATE_BUF_I_TO_M;   // <<< FIX
+                            next_state = STATE_BUF_I_TO_M;
                     end else begin
-                        next_state = STATE_ALLOCATE;
+                        // READ MISS - use BUS_RD to fetch in Shared state
+                        if (valid[lru_replace_way][addr_index] &&
+                            coherence_state[lru_replace_way][addr_index] == COHERENCE_M)
+                            next_state = STATE_WRITEBACK;
+                        else
+                            next_state = STATE_BUF_I_TO_S;
                     end
                 end
             end
@@ -312,7 +317,7 @@ module l1_cache_msi #(
             
             STATE_WRITEBACK: begin
                 if (l2_req_sent && l2_ready)
-                    next_state = STATE_ALLOCATE;
+                    next_state = (saved_is_read ? STATE_BUF_I_TO_S : STATE_BUF_I_TO_M);
             end
             
             STATE_ALLOCATE: begin
@@ -338,8 +343,6 @@ module l1_cache_msi #(
             snoop_hit <= 1'b0;
             snoop_data <= {LINE_SIZE*8{1'b0}};
             
-            
-            
             if (snoop_valid && snoop_cache_hit) begin
                 snoop_hit <= 1'b1;
                 
@@ -348,8 +351,10 @@ module l1_cache_msi #(
                         // Other cache reading - provide data if Modified
                         if (snoop_hit_state == COHERENCE_M) begin
                             snoop_data <= data[snoop_hit_way][snoop_index];
-                            // Transition M->S (through buffer state in main FSM if active)
+                            // Transition M->S
                             coherence_state[snoop_hit_way][snoop_index] <= COHERENCE_S;
+                            $display("[L1-%0d %0t] SNOOP: M->S transition on BUS_RD, providing data", 
+                                     CACHE_ID, $time);
                         end else if (snoop_hit_state == COHERENCE_S) begin
                             // Already shared, stay shared
                             snoop_data <= data[snoop_hit_way][snoop_index];
@@ -360,6 +365,8 @@ module l1_cache_msi #(
                         // Other cache wants exclusive - invalidate our copy
                         if (snoop_hit_state == COHERENCE_M) begin
                             snoop_data <= data[snoop_hit_way][snoop_index];
+                            $display("[L1-%0d %0t] SNOOP: M->I transition on BUS_RDX, providing data", 
+                                     CACHE_ID, $time);
                         end
                         coherence_state[snoop_hit_way][snoop_index] <= COHERENCE_I;
                         valid[snoop_hit_way][snoop_index] <= 1'b0;
@@ -369,6 +376,8 @@ module l1_cache_msi #(
                         // Other cache upgrading S->M - invalidate our copy
                         coherence_state[snoop_hit_way][snoop_index] <= COHERENCE_I;
                         valid[snoop_hit_way][snoop_index] <= 1'b0;
+                        $display("[L1-%0d %0t] SNOOP: S->I transition on BUS_UPGR", 
+                                 CACHE_ID, $time);
                     end
                 endcase
             end
@@ -495,59 +504,85 @@ module l1_cache_msi #(
                     end
                 end
                 
-                // I->S Transition Buffer State
+                // I->S Transition Buffer State (READ MISS)
                 STATE_BUF_I_TO_S: begin
                     if (!bus_req) begin
                         bus_req <= 1'b1;
                         bus_cmd <= BUS_RD;
                         bus_addr <= saved_addr;
-                    end else if (bus_grant) begin
-                        if (bus_valid) begin
-                            // Data received, install in Shared state
+                        $display("[L1-%0d %0t] BUS_RD request for addr=0x%h", CACHE_ID, $time, saved_addr);
+                    end else if (bus_grant && bus_valid) begin
+                        // Data received from bus (could be from L2 or snoop response)
+                        // Install in the selected way (for miss: use replace_way, for hit in I: use hit_way)
+                        if (cache_hit) begin
+                            // Had a hit but was Invalid - use hit_way
                             data[hit_way][addr_index] <= bus_data_in;
                             coherence_state[hit_way][addr_index] <= COHERENCE_S;
                             valid[hit_way][addr_index] <= 1'b1;
                             tag[hit_way][addr_index] <= addr_tag;
-                            
                             cpu_rdata <= bus_data_in[word_offset*32 +: 32];
-                            
                             lru_access_valid <= 1'b1;
                             lru_access_way <= way_hit;
-                            
-                            bus_req <= 1'b0;
-                            bus_cmd <= BUS_IDLE;
-                            bus_transaction_done <= 1'b1;
+                            $display("[L1-%0d %0t] BUS_RD complete: installed in way=%0d (hit), data=0x%h", 
+                                     CACHE_ID, $time, hit_way, bus_data_in[31:0]);
+                        end else begin
+                            // True miss - use replace_way
+                            data[replace_way][addr_index] <= bus_data_in;
+                            coherence_state[replace_way][addr_index] <= COHERENCE_S;
+                            valid[replace_way][addr_index] <= 1'b1;
+                            tag[replace_way][addr_index] <= addr_tag;
+                            cpu_rdata <= bus_data_in[word_offset*32 +: 32];
+                            lru_access_valid <= 1'b1;
+                            lru_access_way <= (4'b0001 << replace_way);
+                            $display("[L1-%0d %0t] BUS_RD complete: installed in way=%0d (miss), data=0x%h", 
+                                     CACHE_ID, $time, replace_way, bus_data_in[31:0]);
                         end
+                        
+                        bus_req <= 1'b0;
+                        bus_cmd <= BUS_IDLE;
+                        bus_transaction_done <= 1'b1;
                     end
                 end
                 
-                // I->M Transition Buffer State
+                // I->M Transition Buffer State (WRITE MISS)
                 STATE_BUF_I_TO_M: begin
                     if (!bus_req) begin
                         bus_req <= 1'b1;
                         bus_cmd <= BUS_RDX;
                         bus_addr <= saved_addr;
-                    end else if (bus_grant) begin
-                        if (bus_valid) begin
-                            // Data received, install in Modified state with write
-                            temp_line = bus_data_in;
-                            for (b = 0; b < 4; b = b + 1) begin
-                                if (saved_byte_en[b]) begin
-                                    temp_line[(word_offset*32) + (b*8) +: 8] = saved_wdata[b*8 +: 8];
-                                end
+                        $display("[L1-%0d %0t] BUS_RDX request for addr=0x%h", CACHE_ID, $time, saved_addr);
+                    end else if (bus_grant && bus_valid) begin
+                        // Data received, install in Modified state with write
+                        temp_line = bus_data_in;
+                        for (b = 0; b < 4; b = b + 1) begin
+                            if (saved_byte_en[b]) begin
+                                temp_line[(word_offset*32) + (b*8) +: 8] = saved_wdata[b*8 +: 8];
                             end
+                        end
+                        
+                        if (cache_hit) begin
                             data[hit_way][addr_index] <= temp_line;
                             coherence_state[hit_way][addr_index] <= COHERENCE_M;
                             valid[hit_way][addr_index] <= 1'b1;
                             tag[hit_way][addr_index] <= addr_tag;
-                            
                             lru_access_valid <= 1'b1;
                             lru_access_way <= way_hit;
-                            
-                            bus_req <= 1'b0;
-                            bus_cmd <= BUS_IDLE;
-                            bus_transaction_done <= 1'b1;
+                            $display("[L1-%0d %0t] BUS_RDX complete: installed in way=%0d (hit)", 
+                                     CACHE_ID, $time, hit_way);
+                        end else begin
+                            data[replace_way][addr_index] <= temp_line;
+                            coherence_state[replace_way][addr_index] <= COHERENCE_M;
+                            valid[replace_way][addr_index] <= 1'b1;
+                            tag[replace_way][addr_index] <= addr_tag;
+                            lru_access_valid <= 1'b1;
+                            lru_access_way <= (4'b0001 << replace_way);
+                            $display("[L1-%0d %0t] BUS_RDX complete: installed in way=%0d (miss)", 
+                                     CACHE_ID, $time, replace_way);
                         end
+                        
+                        bus_req <= 1'b0;
+                        bus_cmd <= BUS_IDLE;
+                        bus_transaction_done <= 1'b1;
                     end
                 end
                 
@@ -557,10 +592,15 @@ module l1_cache_msi #(
                         l2_wdata <= data[replace_way][addr_index];
                         l2_wr <= 1'b1;
                         l2_req_sent <= 1'b1;
+                        $display("[L1-%0d %0t] Writeback to L2: addr=0x%h", 
+                                 CACHE_ID, $time, {tag[replace_way][addr_index], addr_index, {OFFSET_WIDTH{1'b0}}});
                     end else begin
                         if (l2_ready) begin
                             l2_wr <= 1'b0;
                             l2_req_sent <= 1'b0;
+                            // Invalidate the victim line
+                            valid[replace_way][addr_index] <= 1'b0;
+                            coherence_state[replace_way][addr_index] <= COHERENCE_I;
                         end
                     end
                 end
