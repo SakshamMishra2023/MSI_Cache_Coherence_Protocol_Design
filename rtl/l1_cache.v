@@ -271,11 +271,13 @@ module l1_cache_msi #(
                     end
                 end else begin
                     // Cache miss - check if need writeback
-                    if (valid[lru_replace_way][addr_index]) begin
-                        if (coherence_state[lru_replace_way][addr_index] == COHERENCE_M)
+                    if (saved_is_write) begin
+                        // WRITE MISS must ALWAYS do BUS_RDX
+                        if (valid[lru_replace_way][addr_index] &&
+                            coherence_state[lru_replace_way][addr_index] == COHERENCE_M)
                             next_state = STATE_WRITEBACK;
                         else
-                            next_state = STATE_ALLOCATE;
+                            next_state = STATE_BUF_I_TO_M;   // <<< FIX
                     end else begin
                         next_state = STATE_ALLOCATE;
                     end
