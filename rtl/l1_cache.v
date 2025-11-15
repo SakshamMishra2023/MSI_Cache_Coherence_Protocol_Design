@@ -48,7 +48,10 @@ module l1_cache #(
     output reg l2_rd,
     output reg l2_wr,
     input wire [LINE_SIZE*8-1:0] l2_rdata,
-    input wire l2_ready
+    input wire l2_ready,
+    
+    
+    output reg [1:0] cpu_line_state 
 );
 
     // Bus Command Encoding
@@ -252,8 +255,10 @@ module l1_cache #(
             end
             
             STATE_CHECK_HIT: begin
+            
                 if (cache_hit) begin
                     // Hit - check coherence state and required action
+                    
                     if (saved_is_read) begin
                         // Read: Valid in S or M is OK
                         if (hit_coherence_state == COHERENCE_S || hit_coherence_state == COHERENCE_M)
@@ -271,6 +276,7 @@ module l1_cache #(
                     end
                 end else begin
                     // Cache miss - check if need writeback
+                    
                     if (saved_is_write) begin
                         // WRITE MISS must ALWAYS do BUS_RDX
                         if (valid[lru_replace_way][addr_index] &&
@@ -390,6 +396,8 @@ module l1_cache #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // Reset all cache lines
+            cpu_line_state <= COHERENCE_I;
+
             for (i = 0; i < NUM_WAYS; i = i + 1) begin
                 for (j = 0; j < NUM_SETS; j = j + 1) begin
                     valid[i][j] <= 1'b0;
@@ -451,13 +459,16 @@ module l1_cache #(
                 end
                 
                 STATE_CHECK_HIT: begin
+                    cpu_line_state <= hit_coherence_state;
                     if (cache_hit) begin
                         if (saved_is_read && (hit_coherence_state == COHERENCE_S || hit_coherence_state == COHERENCE_M)) begin
+                            
                             // Read hit in S or M
                             lru_access_valid <= 1'b1;
                             lru_access_way <= way_hit;
                             cpu_rdata <= data[hit_way][addr_index][word_offset*32 +: 32];
                         end else if (saved_is_write && hit_coherence_state == COHERENCE_M) begin
+                            
                             // Write hit in M
                             lru_access_valid <= 1'b1;
                             lru_access_way <= way_hit;
