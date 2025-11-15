@@ -76,16 +76,18 @@ module l1_cache_msi #(
     wire [OFFSET_WIDTH-1:0] addr_offset;
     wire [OFFSET_WIDTH-3:0] word_offset;
     
-    assign addr_tag = saved_addr[31:31-TAG_WIDTH+1];
-    assign addr_index = saved_addr[INDEX_WIDTH+OFFSET_WIDTH-1:OFFSET_WIDTH];
-    assign addr_offset = saved_addr[OFFSET_WIDTH-1:0];
-    assign word_offset = addr_offset[OFFSET_WIDTH-1:2];
+    assign addr_tag    = saved_addr[31 : 32-TAG_WIDTH];
+    assign addr_index  = saved_addr[32-TAG_WIDTH-1 : 32-TAG_WIDTH-INDEX_WIDTH];
+    assign addr_offset = saved_addr[OFFSET_WIDTH-1 : 0];
+    assign word_offset = addr_offset[OFFSET_WIDTH-1 : 2];
+
     
     // Snoop Address Parsing
     wire [TAG_WIDTH-1:0] snoop_tag;
     wire [INDEX_WIDTH-1:0] snoop_index;
-    assign snoop_tag = snoop_addr[31:31-TAG_WIDTH+1];
-    assign snoop_index = snoop_addr[INDEX_WIDTH+OFFSET_WIDTH-1:OFFSET_WIDTH];
+    assign snoop_tag   = snoop_addr[31 : 32-TAG_WIDTH];
+    assign snoop_index = snoop_addr[32-TAG_WIDTH-1 : 32-TAG_WIDTH-INDEX_WIDTH];
+
     
     // Cache Storage Arrays
     reg valid [0:NUM_WAYS-1][0:NUM_SETS-1];
@@ -333,6 +335,8 @@ module l1_cache_msi #(
         end else begin
             snoop_hit <= 1'b0;
             snoop_data <= {LINE_SIZE*8{1'b0}};
+            
+            
             
             if (snoop_valid && snoop_cache_hit) begin
                 snoop_hit <= 1'b1;
