@@ -105,6 +105,9 @@ module tb_msi_cache_coherence;
     reg [`L2_LINE_SIZE*8-1:0] mem_rdata;
     reg mem_ready;
     
+    wire [1:0] l1_0_state;
+    wire [1:0] l1_1_state;
+    
     // Instantiate L1 Cache 0
     l1_cache #(
         .CACHE_ID(0)
@@ -135,7 +138,9 @@ module tb_msi_cache_coherence;
         .l2_rd(l2_0_rd),
         .l2_wr(l2_0_wr),
         .l2_rdata(l2_0_rdata),
-        .l2_ready(l2_0_ready)
+        .l2_ready(l2_0_ready),
+        .cpu_line_state(l1_0_state)
+    
     );
     
     // Instantiate L1 Cache 1
@@ -168,7 +173,9 @@ module tb_msi_cache_coherence;
         .l2_rd(l2_1_rd),
         .l2_wr(l2_1_wr),
         .l2_rdata(l2_1_rdata),
-        .l2_ready(l2_1_ready)
+        .l2_ready(l2_1_ready),
+        
+        .cpu_line_state(l1_1_state)
     );
     
     // Instantiate L2 Cache (shared by both L1s)
