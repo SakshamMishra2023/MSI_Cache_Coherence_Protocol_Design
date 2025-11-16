@@ -1,6 +1,6 @@
 // tb_msi_cache_coherence_enhanced.v
+// Modified testbench with state visibility ports for waveform viewing
 // Enhanced testbench with 30 comprehensive tests for near-100% coverage
-// Includes edge cases, error conditions, and stress scenarios
 
 `timescale 1ns/1ps
 
@@ -57,6 +57,12 @@ module tb_msi_cache_coherence_enhanced;
     wire [31:0] cpu1_rdata;
     wire cpu1_ready;
     
+    // State visibility wires - NEW!
+    wire [1:0] l1_0_line_state;
+    wire [3:0] l1_0_fsm_state;
+    wire [1:0] l1_1_line_state;
+    wire [3:0] l1_1_fsm_state;
+    
     // Shared Bus Signals
     wire bus0_req, bus1_req;
     reg bus0_grant, bus1_grant;
@@ -90,10 +96,8 @@ module tb_msi_cache_coherence_enhanced;
     wire mem_rd, mem_wr;
     reg [`L2_LINE_SIZE*8-1:0] mem_rdata;
     reg mem_ready;
-    wire [1:0] l1_0_state;
-    wire [1:0] l1_1_state;
     
-    // Instantiate L1 Cache 0
+    // Instantiate L1 Cache 0 with state outputs
     l1_cache #(
         .CACHE_ID(0)
     ) cache0 (
@@ -124,10 +128,11 @@ module tb_msi_cache_coherence_enhanced;
         .l2_wr(l2_0_wr),
         .l2_rdata(l2_0_rdata),
         .l2_ready(l2_0_ready),
-        .cpu_line_state(l1_0_state)
+        .cpu_line_state(l1_0_line_state),  // NEW!
+        .fsm_state(l1_0_fsm_state)         // NEW!
     );
     
-    // Instantiate L1 Cache 1
+    // Instantiate L1 Cache 1 with state outputs
     l1_cache #(
         .CACHE_ID(1)
     ) cache1 (
@@ -158,7 +163,8 @@ module tb_msi_cache_coherence_enhanced;
         .l2_wr(l2_1_wr),
         .l2_rdata(l2_1_rdata),
         .l2_ready(l2_1_ready),
-        .cpu_line_state(l1_1_state)
+        .cpu_line_state(l1_1_line_state),  // NEW!
+        .fsm_state(l1_1_fsm_state)         // NEW!
     );
     
     // Instantiate L2 Cache (shared by both L1s)
@@ -364,6 +370,48 @@ module tb_msi_cache_coherence_enhanced;
             end
         end
     endtask
+    
+    // Monitor state changes
+    reg [1:0] prev_l1_0_line_state;
+    reg [3:0] prev_l1_0_fsm_state;
+    reg [1:0] prev_l1_1_line_state;
+    reg [3:0] prev_l1_1_fsm_state;
+    
+    always @(posedge clk) begin
+        // Monitor L1_0 state changes
+        if (l1_0_line_state != prev_l1_0_line_state) begin
+            $display("[STATE %0t] L1_0 line_state: %s -> %s", 
+                     $time,
+                     prev_l1_0_line_state == 2'b00 ? "I" : 
+                     prev_l1_0_line_state == 2'b01 ? "S" : 
+                     prev_l1_0_line_state == 2'b10 ? "M" : "?",
+                     l1_0_line_state == 2'b00 ? "I" : 
+                     l1_0_line_state == 2'b01 ? "S" : 
+                     l1_0_line_state == 2'b10 ? "M" : "?");
+            prev_l1_0_line_state <= l1_0_line_state;
+        end
+        
+        if (l1_0_fsm_state != prev_l1_0_fsm_state) begin
+            prev_l1_0_fsm_state <= l1_0_fsm_state;
+        end
+        
+        // Monitor L1_1 state changes
+        if (l1_1_line_state != prev_l1_1_line_state) begin
+            $display("[STATE %0t] L1_1 line_state: %s -> %s", 
+                     $time,
+                     prev_l1_1_line_state == 2'b00 ? "I" : 
+                     prev_l1_1_line_state == 2'b01 ? "S" : 
+                     prev_l1_1_line_state == 2'b10 ? "M" : "?",
+                     l1_1_line_state == 2'b00 ? "I" : 
+                     l1_1_line_state == 2'b01 ? "S" : 
+                     l1_1_line_state == 2'b10 ? "M" : "?");
+            prev_l1_1_line_state <= l1_1_line_state;
+        end
+        
+        if (l1_1_fsm_state != prev_l1_1_fsm_state) begin
+            prev_l1_1_fsm_state <= l1_1_fsm_state;
+        end
+    end
     
     // Test stimulus
     reg [31:0] temp_data;
