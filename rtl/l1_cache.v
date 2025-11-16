@@ -1,4 +1,5 @@
 // l1_cache_msi.v - L1 Cache with MSI Coherence Protocol
+// Modified to include state output port for waveform viewing
 // L1 Cache: 32KB, 4-way set associative, 64B lines, LRU replacement
 // Write-back, write-allocate policy with MSI coherence
 
@@ -50,8 +51,9 @@ module l1_cache #(
     input wire [LINE_SIZE*8-1:0] l2_rdata,
     input wire l2_ready,
     
-    
-    output reg [1:0] cpu_line_state 
+    // State visibility outputs
+    output reg [1:0] cpu_line_state,  // Coherence state of current CPU access line
+    output reg [3:0] fsm_state        // Current FSM state for debugging
 );
 
     // Bus Command Encoding
@@ -232,12 +234,15 @@ module l1_cache #(
     reg l2_req_sent;
     reg bus_transaction_done;
     
-    // State register
+    // State register - also update fsm_state output
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
+        if (!rst_n) begin
             state <= STATE_IDLE;
-        else
+            fsm_state <= STATE_IDLE;
+        end else begin
             state <= next_state;
+            fsm_state <= next_state;  // Mirror state to output port
+        end
     end
     
     // Next state logic
@@ -488,6 +493,7 @@ module l1_cache #(
                 
                 // S->M Transition Buffer State
                 STATE_BUF_S_TO_M: begin
+                    cpu_line_state <= COHERENCE_S;  // Still in S until upgrade completes
                     if (!bus_req) begin
                         // Request bus for upgrade
                         bus_req <= 1'b1;
@@ -498,6 +504,7 @@ module l1_cache #(
                         if (bus_valid) begin
                             // Upgrade complete, transition to M
                             coherence_state[hit_way][addr_index] <= COHERENCE_M;
+                            cpu_line_state <= COHERENCE_M;
                             
                             // Perform the write
                             temp_line = data[hit_way][addr_index];
@@ -517,6 +524,7 @@ module l1_cache #(
                 
                 // I->S Transition Buffer State (READ MISS)
                 STATE_BUF_I_TO_S: begin
+                    cpu_line_state <= COHERENCE_I;  // Still invalid until data arrives
                     if (!bus_req) begin
                         bus_req <= 1'b1;
                         bus_cmd <= BUS_RD;
@@ -529,6 +537,7 @@ module l1_cache #(
                             // Had a hit but was Invalid - use hit_way
                             data[hit_way][addr_index] <= bus_data_in;
                             coherence_state[hit_way][addr_index] <= COHERENCE_S;
+                            cpu_line_state <= COHERENCE_S;
                             valid[hit_way][addr_index] <= 1'b1;
                             tag[hit_way][addr_index] <= addr_tag;
                             cpu_rdata <= bus_data_in[word_offset*32 +: 32];
@@ -540,6 +549,7 @@ module l1_cache #(
                             // True miss - use replace_way
                             data[replace_way][addr_index] <= bus_data_in;
                             coherence_state[replace_way][addr_index] <= COHERENCE_S;
+                            cpu_line_state <= COHERENCE_S;
                             valid[replace_way][addr_index] <= 1'b1;
                             tag[replace_way][addr_index] <= addr_tag;
                             cpu_rdata <= bus_data_in[word_offset*32 +: 32];
@@ -557,6 +567,7 @@ module l1_cache #(
                 
                 // I->M Transition Buffer State (WRITE MISS)
                 STATE_BUF_I_TO_M: begin
+                    cpu_line_state <= COHERENCE_I;  // Still invalid until data arrives
                     if (!bus_req) begin
                         bus_req <= 1'b1;
                         bus_cmd <= BUS_RDX;
@@ -574,6 +585,7 @@ module l1_cache #(
                         if (cache_hit) begin
                             data[hit_way][addr_index] <= temp_line;
                             coherence_state[hit_way][addr_index] <= COHERENCE_M;
+                            cpu_line_state <= COHERENCE_M;
                             valid[hit_way][addr_index] <= 1'b1;
                             tag[hit_way][addr_index] <= addr_tag;
                             lru_access_valid <= 1'b1;
@@ -583,6 +595,7 @@ module l1_cache #(
                         end else begin
                             data[replace_way][addr_index] <= temp_line;
                             coherence_state[replace_way][addr_index] <= COHERENCE_M;
+                            cpu_line_state <= COHERENCE_M;
                             valid[replace_way][addr_index] <= 1'b1;
                             tag[replace_way][addr_index] <= addr_tag;
                             lru_access_valid <= 1'b1;
@@ -594,7 +607,7 @@ module l1_cache #(
                         bus_req <= 1'b0;
                         bus_cmd <= BUS_IDLE;
                         bus_transaction_done <= 1'b1;
-                    end
+                        end
                 end
                 
                 STATE_WRITEBACK: begin
@@ -637,9 +650,11 @@ module l1_cache #(
                                 end
                                 data[replace_way][addr_index] <= temp_line;
                                 coherence_state[replace_way][addr_index] <= COHERENCE_M;
+                                cpu_line_state <= COHERENCE_M;
                             end else begin
                                 data[replace_way][addr_index] <= l2_rdata;
                                 coherence_state[replace_way][addr_index] <= COHERENCE_S;
+                                cpu_line_state <= COHERENCE_S;
                             end
                             
                             lru_access_valid <= 1'b1;
