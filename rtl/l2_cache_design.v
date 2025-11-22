@@ -1,4 +1,3 @@
-// With code snippets from https://github.com/midn8hustlr/MSI_cache_coherence/tree/master/RTL and enhancements from claude
 
 `include "cache_params.vh"
 
