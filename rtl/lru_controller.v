@@ -1,9 +1,3 @@
-// lru_controller.v
-// LRU (Least Recently Used) replacement policy for 4-way associative cache
-// Uses pseudo-LRU with 2-bit counters per way
-// Counter values: 0=MRU (Most Recently Used), 3=LRU (Least Recently Used)
-
-//code debugging used from claude
 
 module lru_controller #(
     parameter NUM_WAYS = 4
