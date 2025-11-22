@@ -284,7 +284,7 @@ This project is open-source and available for educational purposes.
 
 ## 👤 Author
 
-**Saksham Miishra, Jagan Kumar Tata and Pallav Kumar**  
+**Saksham Mishra, Jagan Kumar Tata and Pallav Kumar**  
 Computer Architecture Project  
 
 ---
